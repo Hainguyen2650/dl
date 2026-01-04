@@ -1,0 +1,21 @@
+[project]
+name = "working"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "matplotlib>=3.10.8",
+    "opencv-python>=4.12.0.88",
+    "openpyxl>=3.1.5",
+    "pip>=25.3",
+    "scikit-image>=0.25.2",
+    "scikit-learn>=1.7.2",
+    "seaborn>=0.13.2",
+    "tqdm>=4.67.1",
+    "transformers>=4.57.3",
+    "ultralytics>=8.3.246",
+    "wandb>=0.23.1",
+]
