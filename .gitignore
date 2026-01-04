@@ -1,0 +1,5 @@
+dataset/
+checkpoints/
+wandb/
+__pycache__/
+.cursor/
