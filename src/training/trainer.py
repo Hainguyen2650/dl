@@ -56,6 +56,13 @@ class Trainer:
         # Models
         self.G = generator.to(self.device)
         self.D = discriminator.to(self.device)
+        
+        # Compile models for faster training (PyTorch 2.0+)
+        if config.compile_models and hasattr(torch, 'compile'):
+            print("Compiling models with torch.compile()...")
+            self.G = torch.compile(self.G)
+            self.D = torch.compile(self.D)
+        
         self.dataloader = dataloader
         
         # Lazy regularization parameters

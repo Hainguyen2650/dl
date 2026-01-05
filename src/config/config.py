@@ -56,6 +56,7 @@ class Config:
     
     # Mixed precision
     use_amp: bool = True       # Set False to disable mixed precision if NaN issues
+    compile_models: bool = True  # Use torch.compile() for faster training (PyTorch 2.0+)
     
     # Logging
     log_interval: int = 50
