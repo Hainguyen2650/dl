@@ -40,7 +40,8 @@ class Config:
     num_gansformer_blocks: int = 4  # Increased for better global context modeling
     
     # Training hyperparameters
-    learning_rate: float = 0.002
+    lr_G: float = 0.002          # Generator learning rate
+    lr_D: float = 0.0002         # Discriminator learning rate (lower to balance with stronger D)
     num_epochs: int = 3
     betas: Tuple[float, float] = (0.0, 0.99)
     

@@ -55,13 +55,40 @@ class ResidualDiscriminatorBlock(nn.Module):
         return self.activation(h + skip)
 
 
+class DiscriminatorBlock(nn.Module):
+    """Discriminator block with convolution, normalization and residual connections.
+    
+    Args:
+        in_ch: Input channels
+        out_ch: Output channels
+        num_residual: Number of residual blocks after downsampling
+    """
+    
+    def __init__(self, in_ch: int, out_ch: int, num_residual: int = 1):
+        super().__init__()
+        
+        # Downsampling with residual
+        self.downsample = ResidualDiscriminatorBlock(in_ch, out_ch, downsample=True)
+        
+        # Additional residual blocks
+        self.residual_blocks = nn.Sequential(*[
+            ResidualDiscriminatorBlock(out_ch, out_ch, downsample=False)
+            for _ in range(num_residual)
+        ])
+    
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.downsample(x)
+        x = self.residual_blocks(x)
+        return x
+
+
 class Discriminator(nn.Module):
     """Discriminator with bipartite attention for global reasoning.
     
     Architecture:
     - Feature extractor: Strided convolutions with residual blocks for downsampling
     - Bipartite attention: Global context aggregation
-    - Classifier head for real/fake classification
+    - Multi-layer classifier: MLP head for real/fake classification
     
     Args:
         config: Configuration object with model hyperparameters
@@ -71,7 +98,7 @@ class Discriminator(nn.Module):
         super().__init__()
         
         self.config = config
-        feature_ch = 256  # Balanced feature channels
+        feature_ch = 512  # Increased feature channels for better capacity
         
         # Initial convolution
         self.initial = nn.Sequential(
@@ -80,20 +107,35 @@ class Discriminator(nn.Module):
         )
         
         # Feature extractor with progressive downsampling
-        # 128×128 → 64×64 → 32×32
-        self.block1 = ResidualDiscriminatorBlock(64, 128, downsample=True)
-        self.block2 = ResidualDiscriminatorBlock(128, 192, downsample=True)
-        self.block3 = ResidualDiscriminatorBlock(192, feature_ch, downsample=True)
+        # 128×128 → 64×64 → 32×32 → 16×16
+        self.block1 = DiscriminatorBlock(64, 128, num_residual=1)
+        self.block2 = DiscriminatorBlock(128, 256, num_residual=1)
+        self.block3 = DiscriminatorBlock(256, feature_ch, num_residual=1)
+        
+        # Additional residual blocks for deeper feature extraction
+        self.deep_features = nn.Sequential(
+            ResidualDiscriminatorBlock(feature_ch, feature_ch),
+            ResidualDiscriminatorBlock(feature_ch, feature_ch),
+        )
         
         # Bipartite attention for global context
         self.attention = BipartiteAttention(feature_ch, num_heads=config.num_heads)
         self.latent = nn.Parameter(torch.randn(1, config.latent_num, feature_ch) * 0.02)
         
-        # Classifier head
+        # Post-attention processing
+        self.post_attention = nn.Sequential(
+            ResidualDiscriminatorBlock(feature_ch, feature_ch),
+        )
+        
+        # Multi-layer classifier head
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Flatten(),
-            spectral_norm(nn.Linear(feature_ch, 1)),
+            spectral_norm(nn.Linear(feature_ch, 256)),
+            nn.LeakyReLU(0.2, inplace=True),
+            spectral_norm(nn.Linear(256, 128)),
+            nn.LeakyReLU(0.2, inplace=True),
+            spectral_norm(nn.Linear(128, 1)),
         )
     
     def forward(self, x: Tensor) -> Tensor:
@@ -112,11 +154,14 @@ class Discriminator(nn.Module):
         
         # Progressive feature extraction
         x = self.block1(x)  # (B, 128, 64, 64)
-        x = self.block2(x)  # (B, 192, 32, 32)
-        features = self.block3(x)  # (B, 256, 16, 16)
+        x = self.block2(x)  # (B, 256, 32, 32)
+        x = self.block3(x)  # (B, 512, 16, 16)
+        
+        # Deeper feature extraction
+        features = self.deep_features(x)
         _, C, H, W = features.shape
         
-        # Flatten for attention: (B, 256, 16, 16) → (B, 256, 256)
+        # Flatten for attention: (B, 512, 16, 16) → (B, 256, 512)
         features_flat = features.flatten(2).transpose(1, 2)
         
         # Expand latents: (1, M, C) → (B, M, C)
@@ -125,8 +170,11 @@ class Discriminator(nn.Module):
         # Apply bipartite attention
         features_attn, _ = self.attention(features_flat, z)
         
-        # Reshape back: (B, 256, 256) → (B, 256, 16, 16)
+        # Reshape back: (B, 256, 512) → (B, 512, 16, 16)
         features_attn = features_attn.transpose(1, 2).reshape(B, C, H, W)
+        
+        # Post-attention processing
+        features_attn = self.post_attention(features_attn)
         
         # Classification
         logits = self.classifier(features_attn)

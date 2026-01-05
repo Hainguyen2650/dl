@@ -62,17 +62,18 @@ class Trainer:
         self.d_reg_interval = config.d_reg_interval
         self.r1_gamma = config.r1_gamma
         
-        # Optimizers with adjusted learning rate for lazy regularization
+        # Optimizers with separate learning rates for G and D
+        # D learning rate adjusted for lazy regularization
         reg_ratio = self.d_reg_interval / (self.d_reg_interval + 1)
         
         self.opt_G = Adam(
             self.G.parameters(),
-            lr=config.learning_rate,
+            lr=config.lr_G,
             betas=config.betas,
         )
         self.opt_D = Adam(
             self.D.parameters(),
-            lr=config.learning_rate * reg_ratio,
+            lr=config.lr_D * reg_ratio,
             betas=(config.betas[0], config.betas[1] ** reg_ratio),
         )
         
@@ -107,7 +108,8 @@ class Trainer:
         # Prepare config dict for wandb
         config_dict = {
             "batch_size": self.config.batch_size,
-            "learning_rate": self.config.learning_rate,
+            "lr_G": self.config.lr_G,
+            "lr_D": self.config.lr_D,
             "num_epochs": self.config.num_epochs,
             "img_size": self.config.img_size,
             "latent_dim": self.config.latent_dim,
