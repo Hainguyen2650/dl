@@ -319,7 +319,11 @@ class Trainer:
             r1_loss = self.r1_gamma / 2 * self.d_reg_interval * r1_penalty
             self.scaler_D.scale(r1_loss).backward()
         
-        # Optimizer step with gradient unscaling
+        # Unscale gradients and clip to prevent explosion
+        self.scaler_D.unscale_(self.opt_D)
+        torch.nn.utils.clip_grad_norm_(self.D.parameters(), self.config.grad_clip)
+        
+        # Optimizer step
         self.scaler_D.step(self.opt_D)
         self.scaler_D.update()
         
@@ -364,7 +368,11 @@ class Trainer:
         # Backward with gradient scaling
         self.scaler_G.scale(loss_g).backward()
         
-        # Optimizer step with gradient unscaling
+        # Unscale gradients and clip to prevent explosion
+        self.scaler_G.unscale_(self.opt_G)
+        torch.nn.utils.clip_grad_norm_(self.G.parameters(), self.config.grad_clip)
+        
+        # Optimizer step
         self.scaler_G.step(self.opt_G)
         self.scaler_G.update()
         

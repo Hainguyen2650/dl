@@ -52,6 +52,7 @@ class Config:
     r1_gamma: float = 1.0      # R1 gradient penalty weight (reduced to prevent D collapse)
     d_reg_interval: int = 16   # Lazy regularization interval
     r1_warmup_steps: int = 500 # Disable R1 for first N steps to let D establish
+    grad_clip: float = 1.0     # Gradient clipping max norm (prevents explosion)
     
     # Logging
     log_interval: int = 50
