@@ -76,13 +76,18 @@ class BipartiteAttention(nn.Module):
         Returns:
             Attention output (B, H, N, D)
         """
+        # Compute attention in fp32 for numerical stability
+        dtype = q.dtype
+        q, k, v = q.float(), k.float(), v.float()
+        
         # (B, H, N, D) @ (B, H, D, M) → (B, H, N, M)
         attn_weights = (q @ k.transpose(-2, -1)) * self.scale
         attn_weights = attn_weights.softmax(dim=-1)
         attn_weights = self.dropout(attn_weights)
         
         # (B, H, N, M) @ (B, H, M, D) → (B, H, N, D)
-        return attn_weights @ v
+        out = attn_weights @ v
+        return out.to(dtype)
     
     def forward(self, x: Tensor, z: Tensor) -> tuple[Tensor, Tensor]:
         """Apply bidirectional attention between pixels and latents.

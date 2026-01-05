@@ -78,7 +78,7 @@ class Trainer:
         )
         
         # Mixed precision training scalers
-        self.use_amp = config.device == "cuda"
+        self.use_amp = config.device == "cuda" and config.use_amp
         self.scaler_G = GradScaler("cuda", enabled=self.use_amp)
         self.scaler_D = GradScaler("cuda", enabled=self.use_amp)
         

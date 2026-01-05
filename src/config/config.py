@@ -40,8 +40,8 @@ class Config:
     num_gansformer_blocks: int = 4  # Increased for better global context modeling
     
     # Training hyperparameters
-    lr_G: float = 0.002          # Generator learning rate
-    lr_D: float = 0.002          # Discriminator learning rate (matched with G)
+    lr_G: float = 0.0002         # Generator learning rate
+    lr_D: float = 0.0002         # Discriminator learning rate (matched with G)
     num_epochs: int = 3
     betas: Tuple[float, float] = (0.0, 0.99)
     
@@ -53,6 +53,9 @@ class Config:
     d_reg_interval: int = 16   # Lazy regularization interval
     r1_warmup_steps: int = 500 # Disable R1 for first N steps to let D establish
     grad_clip: float = 1.0     # Gradient clipping max norm (prevents explosion)
+    
+    # Mixed precision
+    use_amp: bool = True       # Set False to disable mixed precision if NaN issues
     
     # Logging
     log_interval: int = 50
