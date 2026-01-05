@@ -41,7 +41,7 @@ class Config:
     
     # Training hyperparameters
     lr_G: float = 0.002          # Generator learning rate
-    lr_D: float = 0.0002         # Discriminator learning rate (lower to balance with stronger D)
+    lr_D: float = 0.002          # Discriminator learning rate (matched with G)
     num_epochs: int = 3
     betas: Tuple[float, float] = (0.0, 0.99)
     
@@ -49,7 +49,7 @@ class Config:
     l1_weight: float = 100.0
     
     # Regularization
-    r1_gamma: float = 10.0     # R1 gradient penalty weight
+    r1_gamma: float = 1.0      # R1 gradient penalty weight (reduced to prevent D collapse)
     d_reg_interval: int = 16   # Lazy regularization interval
     
     # Logging
