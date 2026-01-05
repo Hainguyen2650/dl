@@ -37,7 +37,7 @@ class Config:
     # Generator architecture
     encoder_channels: Tuple[int, ...] = (64, 128, 256)
     bottleneck_channels: int = 256
-    num_gansformer_blocks: int = 2
+    num_gansformer_blocks: int = 4  # Increased for better global context modeling
     
     # Training hyperparameters
     learning_rate: float = 0.002
