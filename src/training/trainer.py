@@ -446,7 +446,9 @@ class Trainer:
                     fake_imgs, g_metrics = self.train_generator(masked_imgs, gt_imgs)
                     
                     # Train discriminator
-                    apply_r1 = (self.global_step % self.d_reg_interval == 0)
+                    # R1 warmup: disable R1 for first N steps to let D establish
+                    past_warmup = self.global_step >= self.config.r1_warmup_steps
+                    apply_r1 = past_warmup and (self.global_step % self.d_reg_interval == 0)
                     d_metrics = self.train_discriminator(gt_imgs, fake_imgs, apply_r1)
                     
                     # Logging
