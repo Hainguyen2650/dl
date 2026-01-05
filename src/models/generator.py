@@ -106,7 +106,7 @@ class Generator(nn.Module):
         self.bottleneck = nn.Sequential(*[
             GansformerBlock(
                 channels=bottleneck_ch,
-                num_latents=config.latent_dim,
+                num_latents=config.latent_num,
                 num_heads=config.num_heads
             )
             for _ in range(config.num_gansformer_blocks)

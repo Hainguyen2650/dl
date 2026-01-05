@@ -38,7 +38,7 @@ class Discriminator(nn.Module):
         
         # Bipartite attention for global context
         self.attention = BipartiteAttention(feature_ch, num_heads=config.num_heads)
-        self.latent = nn.Parameter(torch.randn(1, config.latent_dim, feature_ch) * 0.02)
+        self.latent = nn.Parameter(torch.randn(1, config.latent_num, feature_ch) * 0.02)
         
         # Global pooling and classification
         self.pool = nn.AdaptiveAvgPool2d(1)
