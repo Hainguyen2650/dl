@@ -53,6 +53,7 @@ class Config:
     d_reg_interval: int = 16   # Lazy regularization interval
     r1_warmup_steps: int = 500 # Disable R1 for first N steps to let D establish
     grad_clip: float = 1.0     # Gradient clipping max norm (prevents explosion)
+    d_train_freq: int = 2      # Train D every N steps (1 = every step, 2 = every other step)
     
     # Mixed precision
     use_amp: bool = True       # Set False to disable mixed precision if NaN issues

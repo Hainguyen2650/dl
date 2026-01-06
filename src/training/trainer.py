@@ -460,11 +460,23 @@ class Trainer:
                     # Train generator first (to get fake images)
                     fake_imgs, g_metrics = self.train_generator(masked_imgs, gt_imgs)
                     
-                    # Train discriminator
-                    # R1 warmup: disable R1 for first N steps to let D establish
-                    past_warmup = self.global_step >= self.config.r1_warmup_steps
-                    apply_r1 = past_warmup and (self.global_step % self.d_reg_interval == 0)
-                    d_metrics = self.train_discriminator(gt_imgs, fake_imgs, apply_r1)
+                    # Train discriminator (only every d_train_freq steps)
+                    if self.global_step % self.config.d_train_freq == 0:
+                        # R1 warmup: disable R1 for first N steps to let D establish
+                        past_warmup = self.global_step >= self.config.r1_warmup_steps
+                        apply_r1 = past_warmup and (self.global_step % self.d_reg_interval == 0)
+                        d_metrics = self.train_discriminator(gt_imgs, fake_imgs, apply_r1)
+                    else:
+                        # Skip D training, just get metrics for logging
+                        with torch.no_grad():
+                            d_real = self.D(gt_imgs)
+                            d_fake = self.D(fake_imgs.detach())
+                        d_metrics = {
+                            "d_loss": 0.0,
+                            "d_real": d_real.mean().item(),
+                            "d_fake": d_fake.mean().item(),
+                            "r1_loss": 0.0,
+                        }
                     
                     # Logging
                     if self.global_step % self.config.log_interval == 0:
