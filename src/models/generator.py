@@ -113,7 +113,7 @@ class EncoderBlock(nn.Module):
         num_residual: Number of residual blocks
     """
     
-    def __init__(self, in_ch: int, out_ch: int, num_residual: int = 2):
+    def __init__(self, in_ch: int, out_ch: int, num_residual: int = 3):
         super().__init__()
         
         # Downsampling convolution
@@ -138,13 +138,13 @@ class DecoderBlock(nn.Module):
     """Decoder block with upsampling, skip connection, and residual blocks.
     
     Args:
-        in_ch: Input channels (includes skip connection)
+        in_ch: Input channels
         out_ch: Output channels
         num_residual: Number of residual blocks
         final: Whether this is the final block (uses Tanh activation)
     """
     
-    def __init__(self, in_ch: int, out_ch: int, num_residual: int = 2, final: bool = False):
+    def __init__(self, in_ch: int, out_ch: int, num_residual: int = 3, final: bool = False):
         super().__init__()
         
         self.final = final
@@ -194,19 +194,23 @@ class Generator(nn.Module):
         self.config = config
         channels = config.encoder_channels
         bottleneck_ch = config.bottleneck_channels
+        num_res = getattr(config, 'num_residual_blocks', 3)
         
         # Initial convolution (no downsampling)
         self.initial = nn.Sequential(
             nn.Conv2d(config.img_channels, channels[0], kernel_size=7, padding=3),
             nn.InstanceNorm2d(channels[0]),
             nn.LeakyReLU(0.2, inplace=True),
+            ResidualBlock(channels[0]),
+            ResidualBlock(channels[0]),
         )
         
         # Encoder blocks with progressive downsampling
-        # 256×256 → 128×128 → 64×64 → 32×32
-        self.encoder1 = EncoderBlock(channels[0], channels[0], num_residual=2)
-        self.encoder2 = EncoderBlock(channels[0], channels[1], num_residual=2)
-        self.encoder3 = EncoderBlock(channels[1], channels[2], num_residual=2)
+        # 256×256 → 128×128 → 64×64 → 32×32 → 16×16
+        self.encoder1 = EncoderBlock(channels[0], channels[0], num_residual=num_res)
+        self.encoder2 = EncoderBlock(channels[0], channels[1], num_residual=num_res)
+        self.encoder3 = EncoderBlock(channels[1], channels[2], num_residual=num_res)
+        self.encoder4 = EncoderBlock(channels[2], channels[3], num_residual=num_res)
         
         # Bottleneck: GANsformer blocks for global context
         self.bottleneck = nn.Sequential(*[
@@ -219,13 +223,16 @@ class Generator(nn.Module):
         ])
         
         # Decoder blocks with progressive upsampling and skip connections
-        # 32×32 → 64×64 → 128×128 → 256×256
-        self.decoder3 = DecoderBlock(channels[2], channels[1], num_residual=2)
-        self.decoder2 = DecoderBlock(channels[1], channels[0], num_residual=2)
-        self.decoder1 = DecoderBlock(channels[0], channels[0], num_residual=2)
+        # 16×16 → 32×32 → 64×64 → 128×128 → 256×256
+        self.decoder4 = DecoderBlock(channels[3], channels[2], num_residual=num_res)
+        self.decoder3 = DecoderBlock(channels[2], channels[1], num_residual=num_res)
+        self.decoder2 = DecoderBlock(channels[1], channels[0], num_residual=num_res)
+        self.decoder1 = DecoderBlock(channels[0], channels[0], num_residual=num_res)
         
         # Final output convolution
         self.final = nn.Sequential(
+            ResidualBlock(channels[0]),
+            ResidualBlock(channels[0]),
             nn.Conv2d(channels[0], channels[0], kernel_size=3, padding=1),
             nn.InstanceNorm2d(channels[0]),
             nn.ReLU(inplace=True),
@@ -249,12 +256,14 @@ class Generator(nn.Module):
         e1 = self.encoder1(x0)   # 128x128
         e2 = self.encoder2(e1)   # 64x64
         e3 = self.encoder3(e2)   # 32x32
+        e4 = self.encoder4(e3)   # 16x16
         
         # Bottleneck with GANsformer attention
-        b = self.bottleneck(e3)
+        b = self.bottleneck(e4)
         
         # Decoder with skip connections
-        d3 = self.decoder3(b, e2)     # 64x64 + skip from e2
+        d4 = self.decoder4(b, e3)     # 32x32 + skip from e3
+        d3 = self.decoder3(d4, e2)    # 64x64 + skip from e2
         d2 = self.decoder2(d3, e1)    # 128x128 + skip from e1
         d1 = self.decoder1(d2, x0)    # 256x256 + skip from x0
         
