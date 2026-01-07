@@ -35,8 +35,8 @@ class Config:
     num_heads: int = 8         # Multi-head attention heads
     
     # Generator architecture
-    encoder_channels: Tuple[int, ...] = (96, 192, 384, 512)  # Increased channels + 4 levels
-    bottleneck_channels: int = 512
+    encoder_channels: Tuple[int, ...] = (96, 192, 384)  # Moderately increased channels
+    bottleneck_channels: int = 384
     num_gansformer_blocks: int = 4  # Increased for better global context modeling
     num_residual_blocks: int = 3    # Residual blocks per encoder/decoder stage
     
