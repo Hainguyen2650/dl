@@ -56,9 +56,6 @@ class Config:
     grad_clip: float = 1.0     # Gradient clipping max norm (prevents explosion)
     d_train_freq: int = 2      # Train D every N steps (1 = every step, 2 = every other step)
     
-    # Mixed precision
-    use_amp: bool = True       # Set False to disable mixed precision if NaN issues
-    compile_models: bool = True  # Use torch.compile() for faster training (PyTorch 2.0+)
     
     # Logging
     log_interval: int = 50

@@ -1,7 +1,7 @@
 """Training loop for GANsformer-based image inpainting.
 
 This module implements the training procedure including:
-- GAN adversarial training with mixed precision (fp16)
+- GAN adversarial training
 - R1 gradient penalty regularization
 - Checkpoint saving and loading
 - Training metrics logging with Weights & Biases
@@ -14,7 +14,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from torch.amp import GradScaler, autocast
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 
@@ -32,7 +31,6 @@ class Trainer:
     - Non-saturating GAN loss with R1 regularization
     - Lazy regularization for discriminator
     - L1 reconstruction loss for generator
-    - Mixed precision training (fp16) for faster training and lower memory
     - Checkpoint management
     - Weights & Biases logging
     
@@ -57,12 +55,6 @@ class Trainer:
         self.G = generator.to(self.device)
         self.D = discriminator.to(self.device)
         
-        # Compile models for faster training (PyTorch 2.0+)
-        if config.compile_models and hasattr(torch, 'compile'):
-            print("Compiling models with torch.compile()...")
-            self.G = torch.compile(self.G)
-            self.D = torch.compile(self.D)
-        
         self.dataloader = dataloader
         
         # Lazy regularization parameters
@@ -84,11 +76,6 @@ class Trainer:
             betas=(config.betas[0], config.betas[1] ** reg_ratio),
         )
         
-        # Mixed precision training scalers
-        self.use_amp = config.device == "cuda" and config.use_amp
-        self.scaler_G = GradScaler("cuda", enabled=self.use_amp)
-        self.scaler_D = GradScaler("cuda", enabled=self.use_amp)
-        
         # Training state
         self.global_step = 0
         self.current_epoch = 0
@@ -98,9 +85,6 @@ class Trainer:
         
         # Store sample batch for consistent visualization
         self._sample_batch = None
-        
-        if self.use_amp:
-            print("Mixed precision training (fp16) enabled")
     
     def _init_wandb(self):
         """Initialize Weights & Biases logging."""
@@ -129,7 +113,6 @@ class Trainer:
             "num_gansformer_blocks": self.config.num_gansformer_blocks,
             "generator_params": sum(p.numel() for p in self.G.parameters()),
             "discriminator_params": sum(p.numel() for p in self.D.parameters()),
-            "mixed_precision": self.use_amp,
         }
         
         wandb.init(
@@ -140,9 +123,9 @@ class Trainer:
             resume="allow",
         )
         
-        # Watch models for gradient logging
-        wandb.watch(self.G, log="gradients", log_freq=100)
-        wandb.watch(self.D, log="gradients", log_freq=100)
+        # Watch models for parameter logging
+        wandb.watch(self.G, log="parameters", log_freq=100)
+        wandb.watch(self.D, log="parameters", log_freq=100)
         
         self.wandb_initialized = True
         print(f"Wandb initialized: {wandb.run.url}")
@@ -257,8 +240,6 @@ class Trainer:
         R1 regularization penalizes the gradient of the discriminator
         with respect to real images, encouraging smoother decision boundaries.
         
-        Note: R1 penalty is computed in fp32 for numerical stability.
-        
         Args:
             real_images: Real images tensor (B, C, H, W)
         
@@ -267,20 +248,19 @@ class Trainer:
         """
         real_images = real_images.detach().requires_grad_(True)
         
-        # Forward pass (in fp32 for gradient stability)
-        with autocast("cuda", enabled=False):
-            real_logits = self.D(real_images.float())
-            
-            # Compute gradients
-            gradients = torch.autograd.grad(
-                outputs=real_logits.sum(),
-                inputs=real_images,
-                create_graph=True,
-                retain_graph=True,
-            )[0]
-            
-            # R1 penalty: ||grad||^2
-            penalty = gradients.pow(2).sum(dim=[1, 2, 3]).mean()
+        # Forward pass
+        real_logits = self.D(real_images)
+        
+        # Compute gradients
+        gradients = torch.autograd.grad(
+            outputs=real_logits.sum(),
+            inputs=real_images,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
+        
+        # R1 penalty: ||grad||^2
+        penalty = gradients.pow(2).sum(dim=[1, 2, 3]).mean()
         
         return penalty
     
@@ -290,7 +270,7 @@ class Trainer:
         fake_images: Tensor,
         apply_r1: bool = False,
     ) -> dict:
-        """Train discriminator for one step with mixed precision.
+        """Train discriminator for one step.
         
         Args:
             real_images: Ground truth images
@@ -302,37 +282,30 @@ class Trainer:
         """
         self.opt_D.zero_grad()
         
-        # Forward pass with mixed precision
-        with autocast("cuda", enabled=self.use_amp):
-            # Real loss: maximize D(real) → minimize -log(sigmoid(D(real)))
-            d_real = self.D(real_images)
-            loss_real = F.softplus(-d_real).mean()
-            
-            # Fake loss: minimize D(fake) → minimize log(sigmoid(D(fake)))
-            d_fake = self.D(fake_images.detach())
-            loss_fake = F.softplus(d_fake).mean()
-            
-            # Total adversarial loss
-            loss_d = loss_real + loss_fake
+        # Real loss: maximize D(real) → minimize -log(sigmoid(D(real)))
+        d_real = self.D(real_images)
+        loss_real = F.softplus(-d_real).mean()
         
-        # Backward with gradient scaling
-        self.scaler_D.scale(loss_d).backward()
+        # Fake loss: minimize D(fake) → minimize log(sigmoid(D(fake)))
+        d_fake = self.D(fake_images.detach())
+        loss_fake = F.softplus(d_fake).mean()
+        
+        # Total adversarial loss
+        loss_d = loss_real + loss_fake
+        loss_d.backward()
         
         # R1 regularization (applied every d_reg_interval steps)
-        # Computed in fp32 for numerical stability
         r1_loss = torch.tensor(0.0, device=self.device)
         if apply_r1:
             r1_penalty = self.compute_r1_penalty(real_images)
             r1_loss = self.r1_gamma / 2 * self.d_reg_interval * r1_penalty
-            self.scaler_D.scale(r1_loss).backward()
+            r1_loss.backward()
         
-        # Unscale gradients and clip to prevent explosion
-        self.scaler_D.unscale_(self.opt_D)
+        # Clip gradients to prevent explosion
         torch.nn.utils.clip_grad_norm_(self.D.parameters(), self.config.grad_clip)
         
         # Optimizer step
-        self.scaler_D.step(self.opt_D)
-        self.scaler_D.update()
+        self.opt_D.step()
         
         return {
             "d_loss": loss_d.item(),
@@ -346,7 +319,7 @@ class Trainer:
         masked_images: Tensor,
         real_images: Tensor,
     ) -> tuple[Tensor, dict]:
-        """Train generator for one step with mixed precision.
+        """Train generator for one step.
         
         Args:
             masked_images: Input masked images
@@ -357,31 +330,25 @@ class Trainer:
         """
         self.opt_G.zero_grad()
         
-        # Forward pass with mixed precision
-        with autocast("cuda", enabled=self.use_amp):
-            # Generate fake images
-            fake_images = self.G(masked_images)
-            
-            # Adversarial loss: fool discriminator
-            d_fake = self.D(fake_images)
-            loss_gan = F.softplus(-d_fake).mean()
-            
-            # L1 reconstruction loss
-            loss_l1 = F.l1_loss(fake_images, real_images) * self.config.l1_weight
-            
-            # Total generator loss
-            loss_g = loss_gan + loss_l1
+        # Generate fake images
+        fake_images = self.G(masked_images)
         
-        # Backward with gradient scaling
-        self.scaler_G.scale(loss_g).backward()
+        # Adversarial loss: fool discriminator
+        d_fake = self.D(fake_images)
+        loss_gan = F.softplus(-d_fake).mean()
         
-        # Unscale gradients and clip to prevent explosion
-        self.scaler_G.unscale_(self.opt_G)
+        # L1 reconstruction loss
+        loss_l1 = F.l1_loss(fake_images, real_images) * self.config.l1_weight
+        
+        # Total generator loss
+        loss_g = loss_gan + loss_l1
+        loss_g.backward()
+        
+        # Clip gradients to prevent explosion
         torch.nn.utils.clip_grad_norm_(self.G.parameters(), self.config.grad_clip)
         
         # Optimizer step
-        self.scaler_G.step(self.opt_G)
-        self.scaler_G.update()
+        self.opt_G.step()
         
         return fake_images, {
             "g_loss": loss_g.item(),
@@ -390,7 +357,7 @@ class Trainer:
         }
     
     def save_checkpoint(self, path: Optional[Path] = None):
-        """Save training checkpoint including scaler states.
+        """Save training checkpoint.
         
         Args:
             path: Optional custom path. Uses config.checkpoint_dir by default.
@@ -405,8 +372,6 @@ class Trainer:
             "discriminator": self.D.state_dict(),
             "opt_G": self.opt_G.state_dict(),
             "opt_D": self.opt_D.state_dict(),
-            "scaler_G": self.scaler_G.state_dict(),
-            "scaler_D": self.scaler_D.state_dict(),
         }
         
         torch.save(checkpoint, path)
@@ -417,7 +382,7 @@ class Trainer:
             wandb.save(str(path))
     
     def load_checkpoint(self, path: Path):
-        """Load training checkpoint including scaler states.
+        """Load training checkpoint.
         
         Args:
             path: Path to checkpoint file
@@ -431,21 +396,14 @@ class Trainer:
         self.opt_G.load_state_dict(checkpoint["opt_G"])
         self.opt_D.load_state_dict(checkpoint["opt_D"])
         
-        # Load scaler states if available (backward compatibility)
-        if "scaler_G" in checkpoint:
-            self.scaler_G.load_state_dict(checkpoint["scaler_G"])
-        if "scaler_D" in checkpoint:
-            self.scaler_D.load_state_dict(checkpoint["scaler_D"])
-        
         print(f"Checkpoint loaded: {path} (step {self.global_step})")
     
     def train(self):
-        """Run the full training loop with mixed precision."""
+        """Run the full training loop."""
         # Initialize wandb
         self._init_wandb()
         
         print(f"Starting training on {self.device}")
-        print(f"Mixed precision: {'enabled' if self.use_amp else 'disabled'}")
         print(f"Generator params: {sum(p.numel() for p in self.G.parameters()):,}")
         print(f"Discriminator params: {sum(p.numel() for p in self.D.parameters()):,}")
         
