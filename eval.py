@@ -70,6 +70,7 @@ class VGGPerceptualLoss(nn.Module):
     
     def __init__(self, device):
         super().__init__()
+        self.device = device
         vgg = models.vgg19(weights=models.VGG19_Weights.IMAGENET1K_V1).features
         
         # Use layers up to relu4_4
@@ -88,8 +89,8 @@ class VGGPerceptualLoss(nn.Module):
         self.eval()
         
         # ImageNet normalization
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1))
     
     def normalize(self, x: Tensor) -> Tensor:
         """Normalize from [-1, 1] to ImageNet range."""
@@ -101,11 +102,11 @@ class VGGPerceptualLoss(nn.Module):
         gen = self.normalize(generated)
         tgt = self.normalize(target)
         
-        loss = 0.0
+        loss = torch.tensor(0.0, device=self.device)
         for block in self.blocks:
             gen = block(gen)
             tgt = block(tgt)
-            loss += F.l1_loss(gen, tgt)
+            loss = loss + F.l1_loss(gen, tgt)
         
         return loss
 
@@ -115,6 +116,7 @@ class InceptionV3(nn.Module):
     
     def __init__(self, device):
         super().__init__()
+        self.device = device
         inception = models.inception_v3(weights=models.Inception_V3_Weights.IMAGENET1K_V1)
         
         # For FID: use pool3 features (2048-dim)
@@ -149,8 +151,8 @@ class InceptionV3(nn.Module):
         self.to(device)
         self.eval()
         
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1))
     
     def normalize(self, x: Tensor) -> Tensor:
         """Normalize from [-1, 1] to ImageNet range and resize to 299."""
@@ -171,7 +173,8 @@ class InceptionV3(nn.Module):
 
 
 def compute_ssim(img1: Tensor, img2: Tensor, window_size: int = 11) -> float:
-    """Compute SSIM between two images."""
+    """Compute SSIM between two images. All tensors must be on same device."""
+    device = img1.device
     C1 = 0.01 ** 2
     C2 = 0.03 ** 2
     
@@ -247,7 +250,7 @@ def main():
     
     args = parser.parse_args()
     
-    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
     
     print("=" * 60)
     print("GANsformer Face Inpainting - Evaluation")
@@ -298,6 +301,7 @@ def main():
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
+            # Move all tensors to device
             images = batch["image"].to(device)
             masks = batch["mask"].to(device)
             masked_images = batch["masked_image"].to(device)
@@ -305,7 +309,7 @@ def main():
             # Generate
             generated = generator(masked_images)
             
-            # Convert to [0, 1] for metrics
+            # Convert to [0, 1] for metrics (keep on device)
             gen_01 = (generated + 1) / 2
             gt_01 = (images + 1) / 2
             
@@ -318,10 +322,12 @@ def main():
                 metrics["mse_full"].append(mse_full)
                 
                 # MSE (masked region)
-                mask_sum = mask_rgb[i].sum()
+                mask_sum = mask_rgb[i].sum().item()
                 if mask_sum > 0:
-                    mse_masked = ((gen_01[i] - gt_01[i]).pow(2) * mask_rgb[i]).sum() / mask_sum
-                    metrics["mse_masked"].append(mse_masked.item())
+                    mse_masked = ((gen_01[i] - gt_01[i]).pow(2) * mask_rgb[i]).sum().item() / mask_sum
+                    metrics["mse_masked"].append(mse_masked)
+                else:
+                    metrics["mse_masked"].append(0.0)
                 
                 # PSNR (full)
                 if mse_full > 0:
@@ -331,43 +337,43 @@ def main():
                 metrics["psnr_full"].append(psnr_full)
                 
                 # PSNR (masked)
-                if len(metrics["mse_masked"]) > 0 and metrics["mse_masked"][-1] > 0:
+                if metrics["mse_masked"][-1] > 0:
                     psnr_masked = 10 * np.log10(1.0 / metrics["mse_masked"][-1])
                 else:
                     psnr_masked = 100.0
                 metrics["psnr_masked"].append(psnr_masked)
                 
-                # SSIM (full)
+                # SSIM (full) - keep tensors on device
                 ssim = compute_ssim(generated[i:i+1], images[i:i+1])
                 metrics["ssim_full"].append(ssim)
             
-            # VGG perceptual loss (batch)
+            # VGG perceptual loss (batch) - all on device
             vgg = vgg_loss(generated, images).item()
             metrics["vgg_perceptual"].extend([vgg / images.size(0)] * images.size(0))
             
-            # Inception features for FID
+            # Inception features for FID - move to CPU after computation
             real_feat = inception.get_features(images).cpu().numpy()
             fake_feat = inception.get_features(generated).cpu().numpy()
             real_features.append(real_feat)
             fake_features.append(fake_feat)
             
-            # Inception logits for IS
+            # Inception logits for IS - move to CPU after computation
             logits = inception.get_logits(generated).cpu().numpy()
             fake_logits.append(logits)
             
-            # Save first 4 samples for visualization
+            # Save first 4 samples for visualization (move to CPU for saving)
             if batch_idx == 0:
                 for i in range(min(4, images.size(0))):
                     sample_images["masked"].append(masked_images[i].cpu())
                     sample_images["generated"].append(generated[i].cpu())
                     sample_images["gt"].append(images[i].cpu())
     
-    # Compute FID
+    # Compute FID (on CPU/numpy)
     real_features = np.concatenate(real_features, axis=0)
     fake_features = np.concatenate(fake_features, axis=0)
     fid = compute_fid(real_features, fake_features)
     
-    # Compute IS
+    # Compute IS (on CPU/numpy)
     fake_logits = np.concatenate(fake_logits, axis=0)
     is_mean, is_std = compute_inception_score(fake_logits)
     
