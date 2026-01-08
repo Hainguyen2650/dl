@@ -35,12 +35,14 @@ class Config:
     num_heads: int = 8         # Multi-head attention heads
     
     # Generator architecture
-    encoder_channels: Tuple[int, ...] = (64, 128, 256)
-    bottleneck_channels: int = 256
-    num_gansformer_blocks: int = 2
+    encoder_channels: Tuple[int, ...] = (96, 192, 384)  # Moderately increased channels
+    bottleneck_channels: int = 384
+    num_gansformer_blocks: int = 4  # Increased for better global context modeling
+    num_residual_blocks: int = 3    # Residual blocks per encoder/decoder stage
     
     # Training hyperparameters
-    learning_rate: float = 0.002
+    lr_G: float = 0.0002         # Generator learning rate
+    lr_D: float = 0.0002         # Discriminator learning rate (matched with G)
     num_epochs: int = 3
     betas: Tuple[float, float] = (0.0, 0.99)
     
@@ -48,8 +50,12 @@ class Config:
     l1_weight: float = 100.0
     
     # Regularization
-    r1_gamma: float = 10.0     # R1 gradient penalty weight
+    r1_gamma: float = 1.0      # R1 gradient penalty weight (reduced to prevent D collapse)
     d_reg_interval: int = 16   # Lazy regularization interval
+    r1_warmup_steps: int = 500 # Disable R1 for first N steps to let D establish
+    grad_clip: float = 1.0     # Gradient clipping max norm (prevents explosion)
+    d_train_freq: int = 2      # Train D every N steps (1 = every step, 2 = every other step)
+    
     
     # Logging
     log_interval: int = 50

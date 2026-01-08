@@ -27,7 +27,8 @@ def parse_args() -> argparse.Namespace:
     # Training parameters
     parser.add_argument("--epochs", type=int, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, help="Batch size")
-    parser.add_argument("--lr", type=float, help="Learning rate")
+    parser.add_argument("--lr-g", type=float, help="Generator learning rate")
+    parser.add_argument("--lr-d", type=float, help="Discriminator learning rate")
     
     # Data paths
     parser.add_argument("--data-root", type=str, help="Root directory for dataset")
@@ -61,8 +62,10 @@ def main():
         config.num_epochs = args.epochs
     if args.batch_size is not None:
         config.batch_size = args.batch_size
-    if args.lr is not None:
-        config.learning_rate = args.lr
+    if args.lr_g is not None:
+        config.lr_G = args.lr_g
+    if args.lr_d is not None:
+        config.lr_D = args.lr_d
     if args.data_root is not None:
         config.data_root = args.data_root
     if args.device is not None:
@@ -88,7 +91,8 @@ def main():
     print(f"Device: {config.device}")
     print(f"Batch Size: {config.batch_size}")
     print(f"Epochs: {config.num_epochs}")
-    print(f"Learning Rate: {config.learning_rate}")
+    print(f"Learning Rate G: {config.lr_G}")
+    print(f"Learning Rate D: {config.lr_D}")
     print(f"Wandb: {'Enabled' if config.use_wandb else 'Disabled'}")
     print("=" * 60)
     
