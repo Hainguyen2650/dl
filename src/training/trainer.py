@@ -54,23 +54,25 @@ class Trainer:
         # Models
         self.G = generator.to(self.device)
         self.D = discriminator.to(self.device)
+        
         self.dataloader = dataloader
         
         # Lazy regularization parameters
         self.d_reg_interval = config.d_reg_interval
         self.r1_gamma = config.r1_gamma
         
-        # Optimizers with adjusted learning rate for lazy regularization
+        # Optimizers with separate learning rates for G and D
+        # D learning rate adjusted for lazy regularization
         reg_ratio = self.d_reg_interval / (self.d_reg_interval + 1)
         
         self.opt_G = Adam(
             self.G.parameters(),
-            lr=config.learning_rate,
+            lr=config.lr_G,
             betas=config.betas,
         )
         self.opt_D = Adam(
             self.D.parameters(),
-            lr=config.learning_rate * reg_ratio,
+            lr=config.lr_D * reg_ratio,
             betas=(config.betas[0], config.betas[1] ** reg_ratio),
         )
         
@@ -97,7 +99,8 @@ class Trainer:
         # Prepare config dict for wandb
         config_dict = {
             "batch_size": self.config.batch_size,
-            "learning_rate": self.config.learning_rate,
+            "lr_G": self.config.lr_G,
+            "lr_D": self.config.lr_D,
             "num_epochs": self.config.num_epochs,
             "img_size": self.config.img_size,
             "latent_dim": self.config.latent_dim,
@@ -120,9 +123,9 @@ class Trainer:
             resume="allow",
         )
         
-        # Watch models for gradient logging
-        wandb.watch(self.G, log="gradients", log_freq=100)
-        wandb.watch(self.D, log="gradients", log_freq=100)
+        # Watch models for parameter logging
+        wandb.watch(self.G, log="parameters", log_freq=100)
+        wandb.watch(self.D, log="parameters", log_freq=100)
         
         self.wandb_initialized = True
         print(f"Wandb initialized: {wandb.run.url}")
@@ -198,9 +201,9 @@ class Trainer:
         images = []
         for i in range(num_samples):
             # Create side-by-side comparison: masked | generated | ground truth
-            masked = denorm(masked_imgs[i]).cpu()
-            fake = denorm(fake_imgs[i]).cpu()
-            gt = denorm(gt_imgs[i]).cpu()
+            masked = denorm(masked_imgs[i]).cpu().float()
+            fake = denorm(fake_imgs[i]).cpu().float()
+            gt = denorm(gt_imgs[i]).cpu().float()
             
             # Concatenate horizontally
             comparison = torch.cat([masked, fake, gt], dim=2)
@@ -298,6 +301,10 @@ class Trainer:
             r1_loss = self.r1_gamma / 2 * self.d_reg_interval * r1_penalty
             r1_loss.backward()
         
+        # Clip gradients to prevent explosion
+        torch.nn.utils.clip_grad_norm_(self.D.parameters(), self.config.grad_clip)
+        
+        # Optimizer step
         self.opt_D.step()
         
         return {
@@ -336,6 +343,11 @@ class Trainer:
         # Total generator loss
         loss_g = loss_gan + loss_l1
         loss_g.backward()
+        
+        # Clip gradients to prevent explosion
+        torch.nn.utils.clip_grad_norm_(self.G.parameters(), self.config.grad_clip)
+        
+        # Optimizer step
         self.opt_G.step()
         
         return fake_images, {
@@ -406,9 +418,23 @@ class Trainer:
                     # Train generator first (to get fake images)
                     fake_imgs, g_metrics = self.train_generator(masked_imgs, gt_imgs)
                     
-                    # Train discriminator
-                    apply_r1 = (self.global_step % self.d_reg_interval == 0)
-                    d_metrics = self.train_discriminator(gt_imgs, fake_imgs, apply_r1)
+                    # Train discriminator (only every d_train_freq steps)
+                    if self.global_step % self.config.d_train_freq == 0:
+                        # R1 warmup: disable R1 for first N steps to let D establish
+                        past_warmup = self.global_step >= self.config.r1_warmup_steps
+                        apply_r1 = past_warmup and (self.global_step % self.d_reg_interval == 0)
+                        d_metrics = self.train_discriminator(gt_imgs, fake_imgs, apply_r1)
+                    else:
+                        # Skip D training, just get metrics for logging
+                        with torch.no_grad():
+                            d_real = self.D(gt_imgs)
+                            d_fake = self.D(fake_imgs.detach())
+                        d_metrics = {
+                            "d_loss": 0.0,
+                            "d_real": d_real.mean().item(),
+                            "d_fake": d_fake.mean().item(),
+                            "r1_loss": 0.0,
+                        }
                     
                     # Logging
                     if self.global_step % self.config.log_interval == 0:
